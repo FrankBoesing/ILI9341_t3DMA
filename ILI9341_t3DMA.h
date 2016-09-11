@@ -31,6 +31,7 @@
 
 
 #define SCREEN_DMA_NUM_SETTINGS (((uint32_t)((2 * ILI9341_TFTHEIGHT * ILI9341_TFTWIDTH) / 65536UL))+1)
+extern uint32_t * screen32 ;
 
 class ILI9341_t3DMA: public ILI9341_t3
 {
@@ -61,15 +62,17 @@ class ILI9341_t3DMA: public ILI9341_t3
 	void ddrawRoundRect(int16_t x0, int16_t y0, int16_t w, int16_t h, int16_t radius, uint16_t color);
 	void dfillRoundRect(int16_t x0, int16_t y0, int16_t w, int16_t h, int16_t radius, uint16_t color);
 	void ddrawBitmap(int16_t x, int16_t y, const uint8_t *bitmap, int16_t w, int16_t h, uint16_t color);
-	//void ddrawChar(int16_t x, int16_t y, unsigned char c, uint16_t color, uint16_t bg, uint8_t size);//TODO
-
-	//virtual size_t write(uint8_t);//TODO
+	void ddrawChar(int16_t x, int16_t y, unsigned char c, uint16_t color, uint16_t bg, uint8_t size);//TODO
+	void ddrawFontChar(unsigned int c);
+	void ddrawFontBits(uint32_t bits, uint32_t numbits, uint32_t x, uint32_t y, uint32_t repeat);
+	virtual size_t write(uint8_t); //overrides write from ILI9341_t3DMA
 
 	void ddrawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color);
 	void ddrawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
 	//void drawFontChar(unsigned int c);;//TODO
 
-
+	void start(void);
+	void fill(void);
  protected:
 
 	//void drawFontBits(uint32_t bits, uint32_t numbits, uint32_t x, uint32_t y, uint32_t repeat);
@@ -78,8 +81,7 @@ class ILI9341_t3DMA: public ILI9341_t3
  private:
 	DMASetting dmasettings[SCREEN_DMA_NUM_SETTINGS];
 	uint8_t started = 0;
-	void start(void);
-	void fill(void);
+	uint8_t autorefresh = 0;
 
 };
 
