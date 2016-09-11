@@ -143,8 +143,8 @@ void ILI9341_t3DMA::dfillScreen(uint16_t color) {
 
 void ILI9341_t3DMA::ddrawPixel(int16_t x, int16_t y, uint16_t color) {
   if ((x < 0) || (x >= _width) || (y < 0) || (y >= _height)) return;
-  //screen[y][x] = color;
-  screen16[y*_height+x*_width*2] = color;
+  screen[y][x] = color;
+  //screen16[y*_height+x*_width*2] = color;
 }
 
 void ILI9341_t3DMA::ddrawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) {
