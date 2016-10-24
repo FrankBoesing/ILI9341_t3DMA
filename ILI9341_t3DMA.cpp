@@ -34,7 +34,6 @@ const uint32_t * screen32e = (uint32_t*)&screen[0][0] + sizeof(screen) / 4;
 DMAChannel dmatx;
 volatile uint8_t rstop = 0;
 
-
 void dmaInterrupt(void) {
   ///  digitalWriteFast(1,!digitalReadFast(1));
   rstop = 1;
@@ -48,7 +47,6 @@ void ILI9341_t3DMA::begin(void) {
   const uint32_t maxLines = (65536 / bytesPerLine);
   uint32_t i = 0, sum = 0, lines;
   do {
-
 	//Source:
 	lines = min(maxLines, ILI9341_TFTHEIGHT - sum);
 	uint32_t len = lines * bytesPerLine;
@@ -87,11 +85,9 @@ void ILI9341_t3DMA::start(void) {
 }
 
 void ILI9341_t3DMA::fill(void) {
-
   for (int y = 0; y < ILI9341_TFTHEIGHT; y++)
 	for (int x = 0; x < ILI9341_TFTWIDTH; x++)
 	  writedata16_cont(screen[y][x]);
-
 };
 
 void ILI9341_t3DMA::refresh(void) {
@@ -99,7 +95,6 @@ void ILI9341_t3DMA::refresh(void) {
 	start();
 	fill();//TODO : Why is fill() needed ?
 	started = 1;
-
   }
   dmasettings[SCREEN_DMA_NUM_SETTINGS - 1].TCD->CSR &= ~DMA_TCD_CSR_DREQ; //disable "disableOnCompletion"
   SPI0_RSER |= SPI_RSER_TFFF_DIRS |	 SPI_RSER_TFFF_RE;	 // Set DMA Interrupt Request Select and Enable register
@@ -111,7 +106,7 @@ void ILI9341_t3DMA::refresh(void) {
 
 void ILI9341_t3DMA::stopRefresh(void) {
   dmasettings[SCREEN_DMA_NUM_SETTINGS - 1].disableOnCompletion();
-  //wait();  
+  wait();  
   SPI.endTransaction();
   autorefresh = 0;
 }
@@ -130,10 +125,8 @@ void ILI9341_t3DMA::wait(void) {
 }
 
 void ILI9341_t3DMA::dfillScreen(uint16_t color) {
-
   uint32_t col32 = (color << 16) | color;
   uint32_t * p = screen32;
-
   do {
 	*p++ = col32; *p++ = col32; *p++ = col32; *p++ = col32; *p++ = col32; *p++ = col32; *p++ = col32; *p++ = col32;
 	*p++ = col32; *p++ = col32; *p++ = col32; *p++ = col32; *p++ = col32; *p++ = col32; *p++ = col32; *p++ = col32;
