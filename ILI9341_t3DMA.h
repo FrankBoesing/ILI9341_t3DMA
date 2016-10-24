@@ -52,6 +52,10 @@ class ILI9341_t3DMA: public ILI9341_t3
 	void dfillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color); // fill a rectangle
 	void dwriteRect(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *pcolors);//TODO
 
+     
+	void ddrawRotChar(unsigned char c, bool compress);
+	void ddrawRotText(const  char* c, bool compress=0);
+	
 	// from Adafruit_GFX.h
 	void ddrawCircle(int16_t x0, int16_t y0, int16_t r, uint16_t color);
 	void ddrawCircleHelper(int16_t x0, int16_t y0, int16_t r, uint8_t cornername, uint16_t color);

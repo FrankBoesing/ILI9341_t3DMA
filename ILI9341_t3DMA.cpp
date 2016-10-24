@@ -34,6 +34,7 @@ const uint32_t * screen32e = (uint32_t*)&screen[0][0] + sizeof(screen) / 4;
 DMAChannel dmatx;
 volatile uint8_t rstop = 0;
 
+
 void dmaInterrupt(void) {
   ///  digitalWriteFast(1,!digitalReadFast(1));
   rstop = 1;
@@ -86,6 +87,7 @@ void ILI9341_t3DMA::start(void) {
 }
 
 void ILI9341_t3DMA::fill(void) {
+
   for (int y = 0; y < ILI9341_TFTHEIGHT; y++)
 	for (int x = 0; x < ILI9341_TFTWIDTH; x++)
 	  writedata16_cont(screen[y][x]);
@@ -109,7 +111,7 @@ void ILI9341_t3DMA::refresh(void) {
 
 void ILI9341_t3DMA::stopRefresh(void) {
   dmasettings[SCREEN_DMA_NUM_SETTINGS - 1].disableOnCompletion();
-  wait();  
+  //wait();  
   SPI.endTransaction();
   autorefresh = 0;
 }
@@ -571,6 +573,71 @@ size_t ILI9341_t3DMA::write(uint8_t c)
 		}
 	}
 	return 1;
+}
+
+void ILI9341_t3DMA::ddrawRotText(const char* c, bool compress) {
+  while (*c != '\0') {
+  	if (*c != ' ') ddrawRotChar(*c++, compress);
+  	else  {
+  		
+	   cursor_y -= 3; 
+	   if (textcolor != textbgcolor) { 
+	   		dfillRect(max(0,cursor_x-7), max(0,cursor_y+1), 8, 3, textbgcolor);
+	   }
+	   c++;
+	   }
+  }
+}
+
+void ILI9341_t3DMA::ddrawRotChar(unsigned char c, bool compress) {
+  uint_fast8_t j = 0;
+  uint_fast16_t c5 = c * 5;
+  uint16_t *color;
+  uint16_t xAdjusted =  cursor_y;
+  bool xFlag = false;
+  if (textcolor != textbgcolor) {
+    while (j < 5) {
+      uint_fast8_t mask = 0x01, i = 8;
+      xFlag = false;
+      while (i--) {
+        if (glcdfont[c5 + j] & mask) { 
+        ddrawPixel( cursor_x - i,  cursor_y, textcolor);
+          xFlag = true;
+        }
+        else {
+          ddrawPixel( cursor_x - i,  cursor_y, textbgcolor);
+        }
+        mask = mask << 1;
+      }
+      if (xFlag || !compress) {
+      	 cursor_y--;
+	  }
+      mask = mask << 1;
+      j++;
+    }
+    
+    ddrawFastHLine(max(0,cursor_x-7), max(0,cursor_y), 8, textbgcolor);
+    cursor_y--;
+  }
+  else {
+    while (j < 5) {
+      uint_fast8_t mask = 0x01, i = 8;
+      xFlag = false;
+      while (i--) {
+        if (glcdfont[c5 + j] & mask) {
+          ddrawPixel( cursor_x - i,  cursor_y, textcolor);
+          xFlag = true;
+        }
+        mask = mask << 1;
+      } 
+      if (xFlag || !compress) {
+      	 cursor_y--;
+	  }
+      j++;
+    }
+    cursor_y--;
+  }
+   
 }
 
 // Draw a character
