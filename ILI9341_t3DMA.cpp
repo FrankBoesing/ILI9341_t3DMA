@@ -905,3 +905,57 @@ void ILI9341_t3DMA::ddrawFontBits(uint32_t bits, uint32_t numbits, uint32_t x, u
 	} while (repeat);
 #endif
 }
+
+void ILI9341_t3DMA::ddrawRotText(const char* c, bool compress) {
+  while (*c != '\0') {
+  	if (*c != ' ') ddrawRotChar(*c++, compress);
+  	else  {
+	   cursor_y -= 3; 
+	   if (textcolor != textbgcolor) dfillRect(max(0,cursor_x-7), max(0,cursor_y+1), 8, 3, textbgcolor);
+	   c++;
+	}
+  }
+}
+
+void ILI9341_t3DMA::ddrawRotChar(unsigned char c, bool compress) {
+  uint_fast8_t j = 0;
+  uint_fast16_t c5 = c * 5;
+  uint16_t *color;
+  uint16_t xAdjusted =  cursor_y;
+  bool xFlag = false;
+  if (textcolor != textbgcolor) {
+    while (j < 5) {
+      uint_fast8_t mask = 0x01, i = 8;
+      xFlag = false;
+      while (i--) {
+        if (glcdfont[c5 + j] & mask) { 
+        	ddrawPixel( cursor_x - i,  cursor_y, textcolor);
+          xFlag = true;
+        }
+        else ddrawPixel( cursor_x - i,  cursor_y, textbgcolor);
+        mask = mask << 1;
+      }
+      if (xFlag || !compress) cursor_y--;
+      mask = mask << 1;
+      j++;
+    }
+    ddrawFastHLine(max(0,cursor_x-7), max(0,cursor_y), 8, textbgcolor);
+    cursor_y--;
+  }
+  else {
+    while (j < 5) {
+      uint_fast8_t mask = 0x01, i = 8;
+      xFlag = false;
+      while (i--) {
+        if (glcdfont[c5 + j] & mask) {
+          ddrawPixel( cursor_x - i,  cursor_y, textcolor);
+          xFlag = true;
+        }
+        mask = mask << 1;
+      } 
+      if (xFlag || !compress) cursor_y--;
+      j++;
+    }
+    cursor_y--;
+  }
+}
