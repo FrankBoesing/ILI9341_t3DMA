@@ -181,7 +181,10 @@ void ILI9341_t3DMA::dfillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16
 };
 
 void ILI9341_t3DMA::dwriteRect(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *pcolors) {
-//TODO : memcopy??
+    for (int i=0; i<w; i++)
+        for (int j=0; j<h; j++) {
+            screen[y+j][x+i] = pcolors[(j * w) + i];
+        }
 };
 
 
