@@ -187,6 +187,14 @@ void ILI9341_t3DMA::dwriteRect(int16_t x, int16_t y, int16_t w, int16_t h, const
         }
 };
 
+void ILI9341_t3DMA::dwriteRectScale(int16_t x, int16_t y, int16_t orig_w, int16_t orig_h, int16_t dest_w, int16_t dest_h, const uint16_t *pcolors) {
+    for (int i=0; i<dest_w; i++)
+        for (int j=0; j<dest_h; j++) {
+            uint16_t x2 = (orig_w * i / dest_w );
+            uint16_t y2 = (orig_h * j / dest_h );
+            screen[y+j][x+i] = pcolors[(y2 * orig_w) + x2];
+        }
+};
 
 /*
 This is the core graphics library for all our displays, providing a common
