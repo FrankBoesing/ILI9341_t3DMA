@@ -50,7 +50,8 @@ class ILI9341_t3DMA: public ILI9341_t3
 	void ddrawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color);
 	void ddrawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color);
 	void dfillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color); // fill a rectangle
-	void dwriteRect(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *pcolors);//TODO
+	void dwriteRect(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *pcolors);
+	void dwriteRectScale(int16_t x, int16_t y, int16_t orig_w, int16_t orig_h, int16_t dest_w, int16_t dest_h, const uint16_t *pcolors);
 	
 	void ddrawRotChar(unsigned char c, bool compress);
 	void ddrawRotText(const  char* c, bool compress=0);
