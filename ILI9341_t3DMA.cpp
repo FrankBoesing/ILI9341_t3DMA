@@ -931,8 +931,6 @@ void ILI9341_t3DMA::ddrawRotText(const char* c, bool compress) {
 void ILI9341_t3DMA::ddrawRotChar(unsigned char c, bool compress) {
   uint_fast8_t j = 0;
   uint_fast16_t c5 = c * 5;
-  uint16_t *color;
-  uint16_t xAdjusted =  cursor_y;
   bool xFlag = false;
   if (textcolor != textbgcolor) {
     while (j < 5) {
