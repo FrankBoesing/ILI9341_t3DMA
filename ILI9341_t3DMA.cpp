@@ -1,3 +1,4 @@
+#define ENABLE_SCREEN_ROTATE 1
 /* ILI9341_t3DMA library code is placed under the MIT license
  * Copyright (c) 2016 Frank Bösing
  *
@@ -111,7 +112,9 @@ void ILI9341_t3DMA::stopRefresh(void) {
   dmasettings[SCREEN_DMA_NUM_SETTINGS - 1].disableOnCompletion();
   wait();  
   SPI.endTransaction();
+  dmatx.disable();
   autorefresh = 0;
+  started = 0;
 }
 
 void ILI9341_t3DMA::refreshOnce(void) {
@@ -143,26 +146,45 @@ void ILI9341_t3DMA::dfillScreen(uint16_t color) {
 
 void ILI9341_t3DMA::ddrawPixel(int16_t x, int16_t y, uint16_t color) {
   if ((x < 0) || (x >= _width) || (y < 0) || (y >= _height)) return;
+#ifdef ENABLE_SCREEN_ROTATE
+  screen16[y*_width +x] = color;
+#else
   screen[y][x] = color;
-  //screen16[y*_height+x*_width*2] = color;
-}
+#endif
+}  
 
 void ILI9341_t3DMA::ddrawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) {
   // Rudimentary clipping
   if ((x >= _width) || (y >= _height)) return;
   if ((y + h - 1) >= _height) h = _height - y;
+#ifdef ENABLE_SCREEN_ROTATE
+  // Lets start off by simply addressing memory
+  int screen_index = y*_width + x;
+  for (;h>0; h--) {
+  	screen16[screen_index] = color;
+  	screen_index += _width;
+  }
+#else
   while (h-- > 0) {
 	screen[y + h][x] = color;
   }
+#endif
+  
 }
 
 void ILI9341_t3DMA::ddrawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
 	// Rudimentary clipping
 	if((x >= _width) || (y >= _height)) return;
 	if((x+w-1) >= _width)  w = _width-x;
+#ifdef ENABLE_SCREEN_ROTATE
+    int screen_index = y*_width + x;
+#endif
 	while (w-- > 0)	 {
+#ifdef ENABLE_SCREEN_ROTATE
+		screen16[screen_index++] = color;
+#else
 		screen[y][x + w] = color;
-		//screen16[y*_height+x*_width+w] = color;
+#endif		
 	}
 }
 
@@ -175,11 +197,23 @@ void ILI9341_t3DMA::dfillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16
 	if((x + w - 1) >= _width)  w = _width  - x;
 	if((y + h - 1) >= _height) h = _height - y;
 
+#ifdef ENABLE_SCREEN_ROTATE
+    int screen_index_row = y*_width + x;
+    for (;h>0; h--) {
+    	int screen_index = screen_index_row;
+    	for (int i = 0 ;i < w; i++) {
+    		screen16[screen_index++] = color;
+    }
+    screen_index_row += _width;
+  }
+
+#else
 	for(int i=h-1; i>=0; i--) {
 		for(int j=w-1; j>=0;j--) {
 			screen[y + i][x + j] = color;
 		}
 	}
+#endif	
 };
 
 void ILI9341_t3DMA::dwriteRect(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *pcolors) {

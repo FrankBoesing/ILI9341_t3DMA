@@ -115,19 +115,14 @@ void setup() {
 
 
 void loop(void) {
-    
- //Rotation does not work :-(
- /*
   for(uint8_t rotation=0; rotation<4; rotation++) {
-    
+    tft.setRotation(rotation);
     testText();
-    tft.start();
-    tft.fill();   
-    tft.setRotation(rotation);  
+    tft.refreshOnce();
     delay(1000);
   }
-  */
 }
+
 
 unsigned long testFillScreen() {
   unsigned long start = micros();
