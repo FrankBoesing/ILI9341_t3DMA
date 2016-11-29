@@ -222,6 +222,17 @@ void ILI9341_t3DMA::dfillScreen(uint16_t color) {
 
 }
 
+
+uint16_t ILI9341_t3DMA::dgetPixel(int16_t x, int16_t y) {
+  if ((x < 0) || (x >= _width) || (y < 0) || (y >= _height)) return 0x0000;
+#ifdef ENABLE_SCREEN_ROTATE
+  return screen16[y*_width +x];
+#else
+  return screen[y][x];
+#endif
+}
+
+
 void ILI9341_t3DMA::ddrawPixel(int16_t x, int16_t y, uint16_t color) {
   if ((x < 0) || (x >= _width) || (y < 0) || (y >= _height)) return;
 #ifdef ENABLE_SCREEN_ROTATE

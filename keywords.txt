@@ -4,6 +4,7 @@ stopRefresh	KEYWORD2
 refreshOnce	KEYWORD2
 wait	KEYWORD2
 dfillScreen	KEYWORD2
+dgetPixel	KEYWORD2
 ddrawPixel	KEYWORD2
 ddrawFastVLine	KEYWORD2
 ddrawFastHLine	KEYWORD2

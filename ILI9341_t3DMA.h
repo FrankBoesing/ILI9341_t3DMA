@@ -38,6 +38,10 @@
 #endif
 #define SCREEN_DMA_NUM_SETTINGS (((uint32_t)((2 * ILI9341_TFTHEIGHT * ILI9341_TFTWIDTH) / 65536UL))+1)
 
+
+#define _width 320
+#define _height 240 //TODO : replace these with uint16_t for screen rotations..
+
 extern uint32_t * screen32 ;
 
 class ILI9341_t3DMA: public ILI9341_t3
@@ -53,6 +57,7 @@ class ILI9341_t3DMA: public ILI9341_t3
 
 	void dfillScreen(uint16_t color); //fills buffer with color
 
+	uint16_t dgetPixel(int16_t x, int16_t y);
 	void ddrawPixel(int16_t x, int16_t y, uint16_t color);
 	void ddrawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color);
 	void ddrawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color);
