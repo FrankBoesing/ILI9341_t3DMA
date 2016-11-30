@@ -52,8 +52,25 @@ public:
   void fillScreen(uint16_t color) {
     tft.dfillScreen(color);
   }
+  void fillRect(int16_t startx, int16_t starty, int16_t end_x, int16_t end_y, uint16_t color){
+    tft.dfillRect(startx, starty, end_x, end_y, color);
+  }
   
   void blend_screen(int16_t startx, int16_t starty, int16_t end_x, int16_t end_y, uint16_t color, float AA) {
+    //checking the coords once instead of per pizel speeds up code alot!
+    //note that these are still hardcoded..
+    if (startx < 0) {
+      startx = 0;
+    }
+    if (starty < 0) {
+      starty = 0;
+    }
+    if (end_x > 240) {
+      end_x = 240;
+    }
+    if (end_y > 320) {
+      end_y = 320;
+    }
     uint16_t bgbuffer;
     for (int16_t y = starty; y < end_y; y++) {
       for (int16_t x = startx; x < end_x; x++) {
