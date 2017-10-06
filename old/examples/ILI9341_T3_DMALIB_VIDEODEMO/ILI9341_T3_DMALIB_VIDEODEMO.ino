@@ -6,8 +6,10 @@
 //
 // This sketch works with std 180MHz and less, but better with 240MHZ, or 144MHz and overclocked F_BUS to the max.
 //
+//For Audio, Edit the Audio-library and remove all files which #include "SD.h" - sorry, no other way.
+//
 
-#define USE_AUDIO 1
+#define USE_AUDIO 0
 #include <SPI.h>
 #include <ILI9341_t3DMA.h>
 #include <SdFat.h>
