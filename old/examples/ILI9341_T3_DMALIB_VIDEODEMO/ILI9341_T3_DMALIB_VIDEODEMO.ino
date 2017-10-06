@@ -70,6 +70,8 @@ int16_t *lb = NULL;
 
 
 void playVideo(const char * filename) {
+  int bytesread;
+  
   Serial.print("Begin playing ");
   Serial.println(filename);
 
@@ -80,18 +82,13 @@ void playVideo(const char * filename) {
 
 #if USE_AUDIO
   file.read(header, 512);  //read header - not used yet
-  if (bytesread <= 0) {
-    break;
-  }
 #endif
 
   while (1) {
     uint32_t m;
     m = micros();
     uint32_t * p = screen32;
-
     int rd = 0;
-    int bytesread;
 
     rd = framesize;
     do {
