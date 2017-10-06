@@ -6,7 +6,7 @@
 //
 // This sketch works with std 180MHz and less, but better with 240MHZ, or 144MHz and overclocked F_BUS to the max.
 //
-//For Audio, Edit the Audio-library and remove all files which #include "SD.h" - sorry, no other way.
+//For Audio, edit the Audio-library and remove all files which #include "SD.h" - sorry, no other way.
 //
 
 #define USE_AUDIO 0
@@ -72,7 +72,7 @@ int16_t *lb = NULL;
 void playVideo(const char * filename) {
   Serial.print("Begin playing ");
   Serial.println(filename);
-    
+
   if (!file.open(filename, O_READ)) {
     SD.errorHalt("open failed");
     return;
@@ -80,6 +80,9 @@ void playVideo(const char * filename) {
 
 #if USE_AUDIO
   file.read(header, 512);  //read header - not used yet
+  if (bytesread <= 0) {
+    break;
+  }
 #endif
 
   while (1) {
@@ -99,16 +102,18 @@ void playVideo(const char * filename) {
       }
       p += bytesread / sizeof(uint32_t);
       rd -= bytesread;
-    } while (rd > 0);
+    } while (bytesread > 0 && rd > 0);
 
-
+    if (bytesread <= 0) {
+      break;
+    }
 
 #if USE_AUDIO
     bytesread = file.read(audiobuf, sizeof(audiobuf));
     if (!bytesread) {
-        break;
-      }
-      
+      break;
+    }
+
     //Audio is 1839 samples*2 channels
     int16_t l = 0;
     for (int i = 0; i < 1839; i++) {
@@ -128,9 +133,11 @@ void playVideo(const char * filename) {
 
 
     //Sync with framerate
-    while (micros() - m < rate_us) {;}
+    while (micros() - m < rate_us) {
+      ;
+    }
   }
-  
+
   file.close();
   Serial.println("EOF");
 }
