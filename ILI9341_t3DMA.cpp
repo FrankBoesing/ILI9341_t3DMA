@@ -22,13 +22,29 @@
    SOFTWARE.
 */
 
+
+//-DF_BUS=120000000
+
 #include "ILI9341_t3DMA.h"
 
-#define SPICLOCK 90e6
+#define SPICLOCK 60e6
+
+#define qBlink() {GPIOC_PTOR=32;} // This toggles the Teensy 3.2 Builtin LED pin 13
+
+#define WIDTH  ILI9341_TFTWIDTH
+#define HEIGHT ILI9341_TFTHEIGHT
+
+#define MADCTL_MY  0x80
+#define MADCTL_MX  0x40
+#define MADCTL_MV  0x20
+#define MADCTL_ML  0x10
+#define MADCTL_RGB 0x00
+#define MADCTL_BGR 0x08
+#define MADCTL_MH  0x04
 
 
-DMAMEM uint16_t screen[ILI9341_TFTHEIGHT][ILI9341_TFTWIDTH];
-#ifdef DMA
+DMAMEM uint16_t screen[HEIGHT][WIDTH];
+#ifdef ILI_DMA
 DMASetting dmasettings[SCREEN_DMA_NUM_SETTINGS];
 DMAChannel dmatx;
 volatile uint8_t rstop = 0;
@@ -39,22 +55,60 @@ uint16_t * screen16 = (uint16_t*)&screen[0][0];
 uint32_t * screen32 = (uint32_t*)&screen[0][0];
 const uint32_t * screen32e = (uint32_t*)&screen[0][0] + sizeof(screen) / 4;
 
+extern "C" const unsigned char glcdfont[];
 
-//-DF_BUS=120000000
+static const uint8_t init_commands[] = {
+	4, 0xEF, 0x03, 0x80, 0x02,
+	4, 0xCF, 0x00, 0XC1, 0X30,
+	5, 0xED, 0x64, 0x03, 0X12, 0X81,
+	4, 0xE8, 0x85, 0x00, 0x78,
+	6, 0xCB, 0x39, 0x2C, 0x00, 0x34, 0x02,
+	2, 0xF7, 0x20,
+	3, 0xEA, 0x00, 0x00,
+	2, ILI9341_PWCTR1, 0x23, // Power control
+	2, ILI9341_PWCTR2, 0x10, // Power control
+	3, ILI9341_VMCTR1, 0x3e, 0x28, // VCM control
+	2, ILI9341_VMCTR2, 0x86, // VCM control2
+	2, ILI9341_MADCTL, 0x48, // Memory Access Control
+	2, ILI9341_PIXFMT, 0x55,
+	3, ILI9341_FRMCTR1, 0x00, 0x18,
+	4, ILI9341_DFUNCTR, 0x08, 0x82, 0x27, // Display Function Control
+	2, 0xF2, 0x00, // Gamma Function Disable
+	2, ILI9341_GAMMASET, 0x01, // Gamma curve selected
+	16, ILI9341_GMCTRP1, 0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08,
+		0x4E, 0xF1, 0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00, // Set Gamma
+	16, ILI9341_GMCTRN1, 0x00, 0x0E, 0x14, 0x03, 0x11, 0x07,
+		0x31, 0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F, // Set Gamma
+	3, 0xb1, 0x00, 0x10, // FrameRate Control 119Hz
+	
+	2, ILI9341_MADCTL, MADCTL_MV | MADCTL_BGR,
+	0
+};
 
-#ifdef DMA
+	void waitFifoNotFull(void) {
+		uint32_t sr;
+		uint32_t tmp __attribute__((unused));
+		do {
+			sr = KINETISK_SPI0.SR;
+			if (sr & 0xF0) tmp = KINETISK_SPI0.POPR;  // drain RX FIFO
+		} while ((sr & (15 << 12)) > (3 << 12));
+	}
+	
+#ifdef ILI_DMA
 void dmaInterrupt(void) {
+	 
   dmatx.clearInterrupt();
-#ifdef SCATTER_GATHER
+#ifdef ILI_DMASCATTER_GATHER
   //digitalWriteFast(13,!digitalRead(13));
+  qBlink();
   rstop = 1;
 #else
   dmatx.disable();
   ntransfer++;
-  if (ntransfer >= SCREEN_DMA_NUM_SETTINGS) {
+  if (ntransfer >= SCREEN_DMA_NUM_SETTINGS) {	  
     ntransfer = 0;
     rstop = 1;
-    //digitalWriteFast(13,!digitalRead(13));
+    //qBlink();
   }
   dmatx = dmasettings[ntransfer];
   dmatx.enable();
@@ -62,10 +116,84 @@ void dmaInterrupt(void) {
 }
 #endif
 
+ILI9341_t3DMA::ILI9341_t3DMA(uint8_t cs, uint8_t dc, uint8_t rst, uint8_t mosi, uint8_t sclk, uint8_t miso)
+{
+	_cs   = cs;
+	_dc   = dc;
+	_rst  = rst;
+	_mosi = mosi;
+	_sclk = sclk;
+	_miso = miso;
+	_width    = WIDTH;
+	_height   = HEIGHT;
+	rotation  = 0;
+	cursor_y  = cursor_x    = 0;
+	textsize  = 1;
+	textcolor = textbgcolor = 0xFFFF;
+	wrap      = true;
+	font      = NULL;
+}
+
 void ILI9341_t3DMA::begin(void) {
-  ILI9341_t3::begin();
-  //pinMode(13, OUTPUT);
-#ifdef DMA
+
+  pinMode(13, OUTPUT);
+  
+    pinMode(_dc, OUTPUT);
+    pinMode(_cs, OUTPUT);
+	digitalWriteFast(_cs, 1);
+	digitalWriteFast(_dc, 1);
+	
+    SPI.setMOSI(_mosi);
+    SPI.setMISO(_miso);
+    SPI.setSCK(_sclk);
+	SPI.begin();
+
+	if (_rst < 255) {	// toggle RST low to reset
+		pinMode(_rst, OUTPUT);
+		digitalWrite(_rst, HIGH);
+		delay(5);
+		digitalWrite(_rst, LOW);
+		delay(20);
+		digitalWrite(_rst, HIGH);
+		delay(150);
+	}
+	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	const uint8_t *addr = init_commands;
+	
+	digitalWriteFast(_cs, 0);
+ 	   
+	while (1) {
+		uint8_t count = *addr++;
+		if (count-- == 0) break;
+	    
+		digitalWriteFast(_dc, 0);
+		SPI.transfer(*addr++);		
+		
+		//writecommand_cont(*addr++);
+		while (count-- > 0) {
+			digitalWriteFast(_dc, 1);
+			SPI.transfer(*addr++);
+			//writedata8_cont(*addr++);
+		}		
+	}
+	digitalWriteFast(_dc, 0);
+	SPI.transfer(ILI9341_SLPOUT);
+	//writecommand_last(ILI9341_SLPOUT);    // Exit Sleep
+	digitalWriteFast(_dc, 1);
+	digitalWriteFast(_cs, 1);
+	SPI.endTransaction();
+
+	delay(120); 		
+	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	digitalWriteFast(_dc, 0);
+	digitalWriteFast(_cs, 0);
+	SPI.transfer(ILI9341_DISPON);
+	//writecommand_last(ILI9341_DISPON);    // Display on
+	digitalWriteFast(_dc, 1);
+	digitalWriteFast(_cs, 1);	
+	SPI.endTransaction();
+	
+#ifdef ILI_DMA
   const uint32_t bytesPerLine = ILI9341_TFTWIDTH * 2;
   const uint32_t maxLines = (65536 / bytesPerLine);
   uint32_t i = 0, sum = 0, lines;
@@ -89,7 +217,7 @@ void ILI9341_t3DMA::begin(void) {
     dmasettings[i].TCD->ATTR_DST = 1;
     dmasettings[i].TCD->DLASTSGA = 0;
 
-#ifdef SCATTER_GATHER
+#ifdef ILI_DMASCATTER_GATHER
     dmasettings[i].replaceSettingsOnCompletion(dmasettings[i + 1]);
 #else
     dmasettings[i].interruptAtCompletion();
@@ -99,10 +227,11 @@ void ILI9341_t3DMA::begin(void) {
     sum += lines;
   } while (++i < SCREEN_DMA_NUM_SETTINGS);
 
-#ifdef SCATTER_GATHER
+#ifdef ILI_DMASCATTER_GATHER
   dmasettings[SCREEN_DMA_NUM_SETTINGS - 1].interruptAtCompletion();
   dmasettings[SCREEN_DMA_NUM_SETTINGS - 1].replaceSettingsOnCompletion(dmasettings[0]);
-
+#else
+  dmatx.attachInterrupt(dmaInterrupt);
 #endif
 
   dmatx.begin(false);
@@ -110,38 +239,46 @@ void ILI9341_t3DMA::begin(void) {
   dmatx = dmasettings[0];
 
   //NVIC_SET_PRIORITY(IRQ_UART0_STATUS, 16);
-  dmatx.attachInterrupt(dmaInterrupt);
-#endif //DMA
+ 
+#endif //ILI_DMA
 
-  dfillScreen(ILI9341_BLACK);
+
+  fillScreen(ILI9341_BLACK);
 };
 
 void ILI9341_t3DMA::start(void) {
-#ifdef DMA
+#ifdef ILI_DMA
   if (started) return;
 #endif
   pinMode(_dc, OUTPUT);
   pinMode(_cs, OUTPUT);
+
+  //SPI.usingInterrupt(IRQ_DMA_CH1);  
 
   SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
   digitalWriteFast(_cs, 0);
   digitalWriteFast(_dc, 0);
 
   SPI.transfer(ILI9341_CASET);
+  digitalWriteFast(_dc, 1);
   SPI.transfer16(0);
-  SPI.transfer16(_width);
+  //SPI.transfer16(_width);  
+  SPI.transfer16(319);
 
   SPI.transfer(ILI9341_PASET);
+  digitalWriteFast(_dc, 1);
   SPI.transfer16(0);
-  SPI.transfer16(_height);
-
+  //SPI.transfer16(_height);
+  SPI.transfer16(239);
+  
+  digitalWriteFast(_dc, 0);
   SPI.transfer(ILI9341_RAMWR);
 
   digitalWriteFast(_dc, 1);
-  //  digitalWriteFast(_cs,0);
+  digitalWriteFast(_cs,0);
 
-#ifdef DMA
-  SPI0_RSER |= SPI_RSER_TFFF_DIRS | SPI_RSER_TFFF_RE;  // Set DMA Interrupt Request Select and Enable register
+#ifdef ILI_DMA
+  SPI0_RSER |= SPI_RSER_TFFF_DIRS | SPI_RSER_TFFF_RE;  // Set ILI_DMA Interrupt Request Select and Enable register
   SPI0_MCR &= ~SPI_MCR_HALT;  //Start transfers.
   SPI0_CTAR0 = SPI0_CTAR1;
   (*(volatile uint16_t *)((int)&SPI0_PUSHR + 2)) = (SPI_PUSHR_CTAS(1) | SPI_PUSHR_CONT) >> 16; //Enable 16 Bit Transfers + Continue-Bit
@@ -152,7 +289,8 @@ void ILI9341_t3DMA::start(void) {
 
 
 void ILI9341_t3DMA::refresh(void) {
-#ifdef DMA
+//	Serial.printf("Channel:%d %d", dmatx.channel, IRQ_DMA_CH0 + dmatx.channel);
+#ifdef ILI_DMA
   start();
   dmasettings[SCREEN_DMA_NUM_SETTINGS - 1].TCD->CSR &= ~DMA_TCD_CSR_DREQ; //disable "disableOnCompletion"
   dmatx.enable();
@@ -166,28 +304,32 @@ void ILI9341_t3DMA::refresh(void) {
 }
 
 void ILI9341_t3DMA::stopRefresh(void) {
-#ifdef DMA
-  dmasettings[SCREEN_DMA_NUM_SETTINGS - 1].disableOnCompletion();
+#ifdef ILI_DMA
+  dmasettings[SCREEN_DMA_NUM_SETTINGS - 1].disableOnCompletion();  
   wait();
+  dmatx.disable();
 #endif
   digitalWriteFast(_dc, 1);
   digitalWriteFast(_cs, 1);
-  SPI.endTransaction();
-#ifdef DMA
-  dmatx.disable();
+#ifdef ILI_DMA
+  
   autorefresh = 0;
   started = 0;
 #endif
+  SPI.endTransaction();
+  //SPI.notUsingInterrupt(IRQ_DMA_CH1); 
+
 }
 
 void ILI9341_t3DMA::refreshOnce(void) {
-#ifdef DMA
+#ifdef ILI_DMA
   if (!autorefresh) {
     refresh();
     stopRefresh();
   }
 #else
   start();
+
   for (int i=0; i<ILI9341_TFTHEIGHT * ILI9341_TFTWIDTH; i++) {	  
 	  KINETISK_SPI0.PUSHR = screen16[i] | SPI_PUSHR_CTAS(1);
 	  waitFifoNotFull();
@@ -197,18 +339,94 @@ void ILI9341_t3DMA::refreshOnce(void) {
 }
 
 void ILI9341_t3DMA::wait(void) {
-#ifdef DMA
+#ifdef ILI_DMA
   while (!rstop) {
-    asm volatile("wfi");
+   // asm volatile("wfi");
   };
 #endif
 }
 
+
+
+void ILI9341_t3DMA::setRotation(uint8_t m)
+{
+/*	
+#ifdef ILI_DMA
+	int aautorefresh = autorefresh;
+	if (autorefresh) {
+		stopRefresh();
+	}
+#else 
+	start();		
+#endif	    
+*/
+  SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+  digitalWriteFast(_cs, 0);
+
+
+	rotation = m % 4; // can't be higher than 3	
+	
+	digitalWriteFast(_dc, 0);
+	SPI.transfer(ILI9341_MADCTL);
+	digitalWriteFast(_dc, 1);
+	//writecommand_cont(ILI9341_MADCTL);
+	switch (rotation) {
+	case 0:
+		SPI.transfer(MADCTL_MX | MADCTL_BGR);
+//		writedata8_last(MADCTL_MX | MADCTL_BGR);
+		_width  = ILI9341_TFTWIDTH;
+		_height = ILI9341_TFTHEIGHT;
+		break;
+	case 1:
+		SPI.transfer(MADCTL_MV | MADCTL_BGR);
+//		writedata8_last(MADCTL_MV | MADCTL_BGR);
+		_width  = ILI9341_TFTHEIGHT;
+		_height = ILI9341_TFTWIDTH;
+		break;
+	case 2:
+		SPI.transfer(MADCTL_MY | MADCTL_BGR);
+//		writedata8_last(MADCTL_MY | MADCTL_BGR);
+		_width  = ILI9341_TFTWIDTH;
+		_height = ILI9341_TFTHEIGHT;
+		break;
+	case 3:
+		SPI.transfer(MADCTL_MX | MADCTL_MY | MADCTL_MV | MADCTL_BGR);
+//		writedata8_last(MADCTL_MX | MADCTL_MY | MADCTL_MV | MADCTL_BGR);
+		_width  = ILI9341_TFTHEIGHT;
+		_height = ILI9341_TFTWIDTH;
+		break;
+	}
+	digitalWriteFast(_cs, 1);	
+	SPI.endTransaction();
+	//start();
+/*	
+#ifdef ILI_DMA	
+	if (aautorefresh) {
+		refresh();
+	}
+#else
+    stopRefresh();
+#endif
+*/
+	cursor_x = 0;
+	cursor_y = 0;
+
+}
+
+void ILI9341_t3DMA::setScroll(uint16_t offset)
+{
+/*
+	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	writecommand_cont(ILI9341_VSCRSADD);
+	writedata16_last(offset);
+	SPI.endTransaction();
+*/	
+}
 /*******************************************************************************************************************/
 /*******************************************************************************************************************/
 /*******************************************************************************************************************/
 
-void ILI9341_t3DMA::dfillScreen(uint16_t color) {
+void ILI9341_t3DMA::fillScreen(uint16_t color) {
 
   uint32_t col32 = (color << 16) | color;
   uint32_t * p = screen32;
@@ -222,7 +440,7 @@ void ILI9341_t3DMA::dfillScreen(uint16_t color) {
 
 }
 
-void ILI9341_t3DMA::ddrawPixel(int16_t x, int16_t y, uint16_t color) {
+void ILI9341_t3DMA::drawPixel(int16_t x, int16_t y, uint16_t color) {
   if ((x < 0) || (x >= _width) || (y < 0) || (y >= _height)) return;
 #ifdef ENABLE_SCREEN_ROTATE
   screen16[y*_width +x] = color;
@@ -231,7 +449,7 @@ void ILI9341_t3DMA::ddrawPixel(int16_t x, int16_t y, uint16_t color) {
 #endif
 }
 
-void ILI9341_t3DMA::ddrawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) {
+void ILI9341_t3DMA::drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) {
   // Rudimentary clipping
   if ((x >= _width) || (y >= _height)) return;
   if ((y + h - 1) >= _height) h = _height - y;
@@ -250,7 +468,7 @@ void ILI9341_t3DMA::ddrawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t col
 
 }
 
-void ILI9341_t3DMA::ddrawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
+void ILI9341_t3DMA::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
 	// Rudimentary clipping
 	if((x >= _width) || (y >= _height)) return;
 	if((x+w-1) >= _width)  w = _width-x;
@@ -267,7 +485,7 @@ void ILI9341_t3DMA::ddrawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t col
 }
 
 // fill a rectangle
-void ILI9341_t3DMA::dfillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
+void ILI9341_t3DMA::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
 	// rudimentary clipping (drawChar w/big text requires this)
 	if((x >= _width) || (y >= _height)) return;
 	if(x < 0) {	w += x; x = 0; 	}
@@ -294,14 +512,15 @@ void ILI9341_t3DMA::dfillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16
 #endif
 };
 
-void ILI9341_t3DMA::dwriteRect(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *pcolors) {
+void ILI9341_t3DMA::writeRect(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *pcolors) {
     for (int i=0; i<w; i++)
         for (int j=0; j<h; j++) {
             screen[y+j][x+i] = pcolors[(j * w) + i];
+			//screen16[ (240-(y+j)) + (x+i)*240 ] = pcolors[(j * w) + i];
         }
 };
 
-void ILI9341_t3DMA::dwriteRectScale(int16_t x, int16_t y, int16_t orig_w, int16_t orig_h, int16_t dest_w, int16_t dest_h, const uint16_t *pcolors) {
+void ILI9341_t3DMA::writeRectScale(int16_t x, int16_t y, int16_t orig_w, int16_t orig_h, int16_t dest_w, int16_t dest_h, const uint16_t *pcolors) {
     for (int i=0; i<dest_w; i++)
         for (int j=0; j<dest_h; j++) {
             uint16_t x2 = (orig_w * i / dest_w );
@@ -347,7 +566,7 @@ POSSIBILITY OF SUCH DAMAGE.
 extern "C" const unsigned char glcdfont[];
 
 // Draw a circle outline
-void ILI9341_t3DMA::ddrawCircle(int16_t x0, int16_t y0, int16_t r,
+void ILI9341_t3DMA::drawCircle(int16_t x0, int16_t y0, int16_t r,
 	uint16_t color) {
   int16_t f = 1 - r;
   int16_t ddF_x = 1;
@@ -355,10 +574,10 @@ void ILI9341_t3DMA::ddrawCircle(int16_t x0, int16_t y0, int16_t r,
   int16_t x = 0;
   int16_t y = r;
 
-  ddrawPixel(x0	 , y0+r, color);
-  ddrawPixel(x0	 , y0-r, color);
-  ddrawPixel(x0+r, y0  , color);
-  ddrawPixel(x0-r, y0  , color);
+  drawPixel(x0	 , y0+r, color);
+  drawPixel(x0	 , y0-r, color);
+  drawPixel(x0+r, y0  , color);
+  drawPixel(x0-r, y0  , color);
 
   while (x<y) {
 	if (f >= 0) {
@@ -370,18 +589,18 @@ void ILI9341_t3DMA::ddrawCircle(int16_t x0, int16_t y0, int16_t r,
 	ddF_x += 2;
 	f += ddF_x;
 
-	ddrawPixel(x0 + x, y0 + y, color);
-	ddrawPixel(x0 - x, y0 + y, color);
-	ddrawPixel(x0 + x, y0 - y, color);
-	ddrawPixel(x0 - x, y0 - y, color);
-	ddrawPixel(x0 + y, y0 + x, color);
-	ddrawPixel(x0 - y, y0 + x, color);
-	ddrawPixel(x0 + y, y0 - x, color);
-	ddrawPixel(x0 - y, y0 - x, color);
+	drawPixel(x0 + x, y0 + y, color);
+	drawPixel(x0 - x, y0 + y, color);
+	drawPixel(x0 + x, y0 - y, color);
+	drawPixel(x0 - x, y0 - y, color);
+	drawPixel(x0 + y, y0 + x, color);
+	drawPixel(x0 - y, y0 + x, color);
+	drawPixel(x0 + y, y0 - x, color);
+	drawPixel(x0 - y, y0 - x, color);
   }
 }
 
-void ILI9341_t3DMA::ddrawCircleHelper( int16_t x0, int16_t y0,
+void ILI9341_t3DMA::drawCircleHelper( int16_t x0, int16_t y0,
 			   int16_t r, uint8_t cornername, uint16_t color) {
   int16_t f		= 1 - r;
   int16_t ddF_x = 1;
@@ -399,32 +618,32 @@ void ILI9341_t3DMA::ddrawCircleHelper( int16_t x0, int16_t y0,
 	ddF_x += 2;
 	f	  += ddF_x;
 	if (cornername & 0x4) {
-	  ddrawPixel(x0 + x, y0 + y, color);
-	  ddrawPixel(x0 + y, y0 + x, color);
+	  drawPixel(x0 + x, y0 + y, color);
+	  drawPixel(x0 + y, y0 + x, color);
 	}
 	if (cornername & 0x2) {
-	  ddrawPixel(x0 + x, y0 - y, color);
-	  ddrawPixel(x0 + y, y0 - x, color);
+	  drawPixel(x0 + x, y0 - y, color);
+	  drawPixel(x0 + y, y0 - x, color);
 	}
 	if (cornername & 0x8) {
-	  ddrawPixel(x0 - y, y0 + x, color);
-	  ddrawPixel(x0 - x, y0 + y, color);
+	  drawPixel(x0 - y, y0 + x, color);
+	  drawPixel(x0 - x, y0 + y, color);
 	}
 	if (cornername & 0x1) {
-	  ddrawPixel(x0 - y, y0 - x, color);
-	  ddrawPixel(x0 - x, y0 - y, color);
+	  drawPixel(x0 - y, y0 - x, color);
+	  drawPixel(x0 - x, y0 - y, color);
 	}
   }
 }
 
-void ILI9341_t3DMA::dfillCircle(int16_t x0, int16_t y0, int16_t r,
+void ILI9341_t3DMA::fillCircle(int16_t x0, int16_t y0, int16_t r,
 				  uint16_t color) {
-  ddrawFastVLine(x0, y0-r, 2*r+1, color);
-  dfillCircleHelper(x0, y0, r, 3, 0, color);
+  drawFastVLine(x0, y0-r, 2*r+1, color);
+  fillCircleHelper(x0, y0, r, 3, 0, color);
 }
 
 // Used to do circles and roundrects
-void ILI9341_t3DMA::dfillCircleHelper(int16_t x0, int16_t y0, int16_t r,
+void ILI9341_t3DMA::fillCircleHelper(int16_t x0, int16_t y0, int16_t r,
 	uint8_t cornername, int16_t delta, uint16_t color) {
 
   int16_t f		= 1 - r;
@@ -444,35 +663,35 @@ void ILI9341_t3DMA::dfillCircleHelper(int16_t x0, int16_t y0, int16_t r,
 	f	  += ddF_x;
 
 	if (cornername & 0x1) {
-	  ddrawFastVLine(x0+x, y0-y, 2*y+1+delta, color);
-	  ddrawFastVLine(x0+y, y0-x, 2*x+1+delta, color);
+	  drawFastVLine(x0+x, y0-y, 2*y+1+delta, color);
+	  drawFastVLine(x0+y, y0-x, 2*x+1+delta, color);
 	}
 	if (cornername & 0x2) {
-	  ddrawFastVLine(x0-x, y0-y, 2*y+1+delta, color);
-	  ddrawFastVLine(x0-y, y0-x, 2*x+1+delta, color);
+	  drawFastVLine(x0-x, y0-y, 2*y+1+delta, color);
+	  drawFastVLine(x0-y, y0-x, 2*x+1+delta, color);
 	}
   }
 }
 
 
 // Bresenham's algorithm - thx wikpedia
-void ILI9341_t3DMA::ddrawLine(int16_t x0, int16_t y0,
+void ILI9341_t3DMA::drawLine(int16_t x0, int16_t y0,
 	int16_t x1, int16_t y1, uint16_t color)
 {
 	if (y0 == y1) {
 		if (x1 > x0) {
-			ddrawFastHLine(x0, y0, x1 - x0 + 1, color);
+			drawFastHLine(x0, y0, x1 - x0 + 1, color);
 		} else if (x1 < x0) {
-			ddrawFastHLine(x1, y0, x0 - x1 + 1, color);
+			drawFastHLine(x1, y0, x0 - x1 + 1, color);
 		} else {
-			ddrawPixel(x0, y0, color);
+			drawPixel(x0, y0, color);
 		}
 		return;
 	} else if (x0 == x1) {
 		if (y1 > y0) {
-			ddrawFastVLine(x0, y0, y1 - y0 + 1, color);
+			drawFastVLine(x0, y0, y1 - y0 + 1, color);
 		} else {
-			ddrawFastVLine(x0, y1, y0 - y1 + 1, color);
+			drawFastVLine(x0, y1, y0 - y1 + 1, color);
 		}
 		return;
 	}
@@ -507,9 +726,9 @@ void ILI9341_t3DMA::ddrawLine(int16_t x0, int16_t y0,
 			if (err < 0) {
 				int16_t len = x0 - xbegin;
 				if (len) {
-					ddrawFastHLine(y0, xbegin, len + 1, color);
+					drawFastHLine(y0, xbegin, len + 1, color);
 				} else {
-					ddrawPixel(y0, x0, color);
+					drawPixel(y0, x0, color);
 				}
 				xbegin = x0 + 1;
 				y0 += ystep;
@@ -517,7 +736,7 @@ void ILI9341_t3DMA::ddrawLine(int16_t x0, int16_t y0,
 			}
 		}
 		if (x0 > xbegin + 1) {
-			ddrawFastVLine(y0, xbegin, x0 - xbegin, color);
+			drawFastVLine(y0, xbegin, x0 - xbegin, color);
 		}
 
 	} else {
@@ -526,9 +745,9 @@ void ILI9341_t3DMA::ddrawLine(int16_t x0, int16_t y0,
 			if (err < 0) {
 				int16_t len = x0 - xbegin;
 				if (len) {
-					ddrawFastHLine(xbegin, y0, len + 1, color);
+					drawFastHLine(xbegin, y0, len + 1, color);
 				} else {
-					ddrawPixel(x0, y0, color);
+					drawPixel(x0, y0, color);
 				}
 				xbegin = x0 + 1;
 				y0 += ystep;
@@ -536,57 +755,57 @@ void ILI9341_t3DMA::ddrawLine(int16_t x0, int16_t y0,
 			}
 		}
 		if (x0 > xbegin + 1) {
-			ddrawFastHLine(xbegin, y0, x0 - xbegin, color);
+			drawFastHLine(xbegin, y0, x0 - xbegin, color);
 		}
 	}
 }
 
 // Draw a rectangle
-void ILI9341_t3DMA::ddrawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
+void ILI9341_t3DMA::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
 {
-	ddrawFastHLine(x, y, w, color);
-	ddrawFastHLine(x, y+h-1, w, color);
-	ddrawFastVLine(x, y, h, color);
-	ddrawFastVLine(x+w-1, y, h, color);
+	drawFastHLine(x, y, w, color);
+	drawFastHLine(x, y+h-1, w, color);
+	drawFastVLine(x, y, h, color);
+	drawFastVLine(x+w-1, y, h, color);
 }
 
 // Draw a rounded rectangle
-void ILI9341_t3DMA::ddrawRoundRect(int16_t x, int16_t y, int16_t w,
+void ILI9341_t3DMA::drawRoundRect(int16_t x, int16_t y, int16_t w,
   int16_t h, int16_t r, uint16_t color) {
   // smarter version
-  ddrawFastHLine(x+r  , y	 , w-2*r, color); // Top
-  ddrawFastHLine(x+r  , y+h-1, w-2*r, color); // Bottom
-  ddrawFastVLine(x	  , y+r	 , h-2*r, color); // Left
-  ddrawFastVLine(x+w-1, y+r	 , h-2*r, color); // Right
+  drawFastHLine(x+r  , y	 , w-2*r, color); // Top
+  drawFastHLine(x+r  , y+h-1, w-2*r, color); // Bottom
+  drawFastVLine(x	  , y+r	 , h-2*r, color); // Left
+  drawFastVLine(x+w-1, y+r	 , h-2*r, color); // Right
   // draw four corners
-  ddrawCircleHelper(x+r	   , y+r	, r, 1, color);
-  ddrawCircleHelper(x+w-r-1, y+r	, r, 2, color);
-  ddrawCircleHelper(x+w-r-1, y+h-r-1, r, 4, color);
-  ddrawCircleHelper(x+r	   , y+h-r-1, r, 8, color);
+  drawCircleHelper(x+r	   , y+r	, r, 1, color);
+  drawCircleHelper(x+w-r-1, y+r	, r, 2, color);
+  drawCircleHelper(x+w-r-1, y+h-r-1, r, 4, color);
+  drawCircleHelper(x+r	   , y+h-r-1, r, 8, color);
 }
 
 // Fill a rounded rectangle
-void ILI9341_t3DMA::dfillRoundRect(int16_t x, int16_t y, int16_t w,
+void ILI9341_t3DMA::fillRoundRect(int16_t x, int16_t y, int16_t w,
 				 int16_t h, int16_t r, uint16_t color) {
   // smarter version
-  dfillRect(x+r, y, w-2*r, h, color);
+  fillRect(x+r, y, w-2*r, h, color);
 
   // draw four corners
-  dfillCircleHelper(x+w-r-1, y+r, r, 1, h-2*r-1, color);
-  dfillCircleHelper(x+r	   , y+r, r, 2, h-2*r-1, color);
+  fillCircleHelper(x+w-r-1, y+r, r, 1, h-2*r-1, color);
+  fillCircleHelper(x+r	   , y+r, r, 2, h-2*r-1, color);
 }
 
 // Draw a triangle
-void ILI9341_t3DMA::ddrawTriangle(int16_t x0, int16_t y0,
+void ILI9341_t3DMA::drawTriangle(int16_t x0, int16_t y0,
 				int16_t x1, int16_t y1,
 				int16_t x2, int16_t y2, uint16_t color) {
-  ddrawLine(x0, y0, x1, y1, color);
-  ddrawLine(x1, y1, x2, y2, color);
-  ddrawLine(x2, y2, x0, y0, color);
+  drawLine(x0, y0, x1, y1, color);
+  drawLine(x1, y1, x2, y2, color);
+  drawLine(x2, y2, x0, y0, color);
 }
 
 // Fill a triangle
-void ILI9341_t3DMA::dfillTriangle ( int16_t x0, int16_t y0,
+void ILI9341_t3DMA::fillTriangle ( int16_t x0, int16_t y0,
 				  int16_t x1, int16_t y1,
 				  int16_t x2, int16_t y2, uint16_t color) {
 
@@ -609,7 +828,7 @@ void ILI9341_t3DMA::dfillTriangle ( int16_t x0, int16_t y0,
 	else if(x1 > b) b = x1;
 	if(x2 < a)		a = x2;
 	else if(x2 > b) b = x2;
-	ddrawFastHLine(a, y0, b-a+1, color);
+	drawFastHLine(a, y0, b-a+1, color);
 	return;
   }
 
@@ -638,7 +857,7 @@ void ILI9341_t3DMA::dfillTriangle ( int16_t x0, int16_t y0,
 	sa += dx01;
 	sb += dx02;
 	if(a > b) swap(a,b);
-	ddrawFastHLine(a, y, b-a+1, color);
+	drawFastHLine(a, y, b-a+1, color);
   }
 
   // For lower part of triangle, find scanline crossings for segments
@@ -651,11 +870,11 @@ void ILI9341_t3DMA::dfillTriangle ( int16_t x0, int16_t y0,
 	sa += dx12;
 	sb += dx02;
 	if(a > b) swap(a,b);
-	ddrawFastHLine(a, y, b-a+1, color);
+	drawFastHLine(a, y, b-a+1, color);
   }
 }
 
-void ILI9341_t3DMA::ddrawBitmap(int16_t x, int16_t y,
+void ILI9341_t3DMA::drawBitmap(int16_t x, int16_t y,
 				  const uint8_t *bitmap, int16_t w, int16_t h,
 				  uint16_t color) {
 
@@ -664,7 +883,7 @@ void ILI9341_t3DMA::ddrawBitmap(int16_t x, int16_t y,
   for(j=0; j<h; j++) {
 	for(i=0; i<w; i++ ) {
 	  if(pgm_read_byte(bitmap + j * byteWidth + i / 8) & (128 >> (i & 7))) {
-			ddrawPixel(x+i, y+j, color);
+			drawPixel(x+i, y+j, color);
 	  }
 	}
   }
@@ -687,7 +906,7 @@ size_t ILI9341_t3DMA::write(uint8_t c)
 		} else if (c == '\r') {
 			// skip em
 		} else {
-			ddrawChar(cursor_x, cursor_y, c, textcolor, textbgcolor, textsize);
+			drawChar(cursor_x, cursor_y, c, textcolor, textbgcolor, textsize);
 			cursor_x += textsize*6;
 			if (wrap && (cursor_x > (_width - textsize*6))) {
 				cursor_y += textsize*8;
@@ -699,7 +918,7 @@ size_t ILI9341_t3DMA::write(uint8_t c)
 }
 
 // Draw a character
-void ILI9341_t3DMA::ddrawChar(int16_t x, int16_t y, unsigned char c,
+void ILI9341_t3DMA::drawChar(int16_t x, int16_t y, unsigned char c,
 				uint16_t fgcolor, uint16_t bgcolor, uint8_t size)
 {
 	if((x >= _width)			|| // Clip right
@@ -723,21 +942,21 @@ void ILI9341_t3DMA::ddrawChar(int16_t x, int16_t y, unsigned char c,
 				xoff = 0;
 				while (line) {
 					if (line == 0x1F) {
-						ddrawFastHLine(x + xoff, y + yoff, 5, fgcolor);
+						drawFastHLine(x + xoff, y + yoff, 5, fgcolor);
 						break;
 					} else if (line == 0x1E) {
-						ddrawFastHLine(x + xoff, y + yoff, 4, fgcolor);
+						drawFastHLine(x + xoff, y + yoff, 4, fgcolor);
 						break;
 					} else if ((line & 0x1C) == 0x1C) {
-						ddrawFastHLine(x + xoff, y + yoff, 3, fgcolor);
+						drawFastHLine(x + xoff, y + yoff, 3, fgcolor);
 						line <<= 4;
 						xoff += 4;
 					} else if ((line & 0x18) == 0x18) {
-						ddrawFastHLine(x + xoff, y + yoff, 2, fgcolor);
+						drawFastHLine(x + xoff, y + yoff, 2, fgcolor);
 						line <<= 3;
 						xoff += 3;
 					} else if ((line & 0x10) == 0x10) {
-						ddrawPixel(x + xoff, y + yoff, fgcolor);
+						drawPixel(x + xoff, y + yoff, fgcolor);
 						line <<= 2;
 						xoff += 2;
 					} else {
@@ -760,25 +979,25 @@ void ILI9341_t3DMA::ddrawChar(int16_t x, int16_t y, unsigned char c,
 				xoff = 0;
 				while (line) {
 					if (line == 0x1F) {
-						dfillRect(x + xoff * size, y + yoff * size,
+						fillRect(x + xoff * size, y + yoff * size,
 							5 * size, size, fgcolor);
 						break;
 					} else if (line == 0x1E) {
-						dfillRect(x + xoff * size, y + yoff * size,
+						fillRect(x + xoff * size, y + yoff * size,
 							4 * size, size, fgcolor);
 						break;
 					} else if ((line & 0x1C) == 0x1C) {
-						dfillRect(x + xoff * size, y + yoff * size,
+						fillRect(x + xoff * size, y + yoff * size,
 							3 * size, size, fgcolor);
 						line <<= 4;
 						xoff += 4;
 					} else if ((line & 0x18) == 0x18) {
-						dfillRect(x + xoff * size, y + yoff * size,
+						fillRect(x + xoff * size, y + yoff * size,
 							2 * size, size, fgcolor);
 						line <<= 3;
 						xoff += 3;
 					} else if ((line & 0x10) == 0x10) {
-						dfillRect(x + xoff * size, y + yoff * size,
+						fillRect(x + xoff * size, y + yoff * size,
 							size, size, fgcolor);
 						line <<= 2;
 						xoff += 2;
@@ -807,9 +1026,9 @@ void ILI9341_t3DMA::ddrawChar(int16_t x, int16_t y, unsigned char c,
 					} else {
 						color = bgcolor;
 					}
-					ddrawFastHLine(ox, oy+yr, size, color);
+					drawFastHLine(ox, oy+yr, size, color);
 				}
-				ddrawFastHLine(ox, oy+yr, size, color);
+				drawFastHLine(ox, oy+yr, size, color);
 			}
 			mask = mask << 1;
 		}
@@ -853,7 +1072,7 @@ static uint32_t fetchbits_signed(const uint8_t *p, uint32_t index, uint32_t requ
 }
 
 
-void ILI9341_t3DMA::ddrawFontChar(unsigned int c)
+void ILI9341_t3DMA::drawFontChar(unsigned int c)
 {
 	uint32_t bitoffset;
 	const uint8_t *data;
@@ -932,7 +1151,7 @@ void ILI9341_t3DMA::ddrawFontChar(unsigned int c)
 				uint32_t xsize = width - x;
 				if (xsize > 32) xsize = 32;
 				uint32_t bits = fetchbits_unsigned(data, bitoffset, xsize);
-				ddrawFontBits(bits, xsize, origin_x + x, y, 1);
+				drawFontBits(bits, xsize, origin_x + x, y, 1);
 				bitoffset += xsize;
 				x += xsize;
 			} while (x < width);
@@ -947,7 +1166,7 @@ void ILI9341_t3DMA::ddrawFontChar(unsigned int c)
 				if (xsize > 32) xsize = 32;
 				//Serial.printf("	 multi line %d\n", n);
 				uint32_t bits = fetchbits_unsigned(data, bitoffset, xsize);
-				ddrawFontBits(bits, xsize, origin_x + x, y, n);
+				drawFontBits(bits, xsize, origin_x + x, y, n);
 				bitoffset += xsize;
 				x += xsize;
 			} while (x < width);
@@ -961,9 +1180,9 @@ void ILI9341_t3DMA::ddrawFontChar(unsigned int c)
 	}
 }
 
-void ILI9341_t3DMA::ddrawFontBits(uint32_t bits, uint32_t numbits, uint32_t x, uint32_t y, uint32_t repeat)
+void ILI9341_t3DMA::drawFontBits(uint32_t bits, uint32_t numbits, uint32_t x, uint32_t y, uint32_t repeat)
 {
-#if 0
+#if 1
 	// TODO: replace this *slow* code with something fast...
 	//Serial.printf("	   %d bits at %d,%d: %X\n", numbits, x, y, bits);
 	if (bits == 0) return;
@@ -973,7 +1192,7 @@ void ILI9341_t3DMA::ddrawFontBits(uint32_t bits, uint32_t numbits, uint32_t x, u
 		do {
 			n--;
 			if (bits & (1 << n)) {
-				ddrawPixel(x1, y, textcolor);
+				drawPixel(x1, y, textcolor);
 				//Serial.printf("		 pixel at %d,%d\n", x1, y);
 			}
 			x1++;
@@ -982,7 +1201,7 @@ void ILI9341_t3DMA::ddrawFontBits(uint32_t bits, uint32_t numbits, uint32_t x, u
 		repeat--;
 	} while (repeat);
 #endif
-#if 1
+#if 0
 	if (bits == 0) return;
 	int w = 0;
 	do {
@@ -1031,18 +1250,18 @@ void ILI9341_t3DMA::ddrawFontBits(uint32_t bits, uint32_t numbits, uint32_t x, u
 #endif
 }
 
-void ILI9341_t3DMA::ddrawRotText(const char* c, bool compress) {
+void ILI9341_t3DMA::drawRotText(const char* c, bool compress) {
   while (*c != '\0') {
-  	if (*c != ' ') ddrawRotChar(*c++, compress);
+  	if (*c != ' ') drawRotChar(*c++, compress);
   	else  {
 	   cursor_y -= 3;
-	   if (textcolor != textbgcolor) dfillRect(max(0,cursor_x-7), max(0,cursor_y+1), 8, 3, textbgcolor);
+	   if (textcolor != textbgcolor) fillRect(max(0,cursor_x-7), max(0,cursor_y+1), 8, 3, textbgcolor);
 	   c++;
 	}
   }
 }
 
-void ILI9341_t3DMA::ddrawRotChar(unsigned char c, bool compress) {
+void ILI9341_t3DMA::drawRotChar(unsigned char c, bool compress) {
   uint_fast8_t j = 0;
   uint_fast16_t c5 = c * 5;
   bool xFlag = false;
@@ -1052,17 +1271,17 @@ void ILI9341_t3DMA::ddrawRotChar(unsigned char c, bool compress) {
       xFlag = false;
       while (i--) {
         if (glcdfont[c5 + j] & mask) {
-        	ddrawPixel( cursor_x - i,  cursor_y, textcolor);
+        	drawPixel( cursor_x - i,  cursor_y, textcolor);
           xFlag = true;
         }
-        else ddrawPixel( cursor_x - i,  cursor_y, textbgcolor);
+        else drawPixel( cursor_x - i,  cursor_y, textbgcolor);
         mask = mask << 1;
       }
       if (xFlag || !compress) cursor_y--;
       mask = mask << 1;
       j++;
     }
-    ddrawFastHLine(max(0,cursor_x-7), max(0,cursor_y), 8, textbgcolor);
+    drawFastHLine(max(0,cursor_x-7), max(0,cursor_y), 8, textbgcolor);
     cursor_y--;
   }
   else {
@@ -1071,7 +1290,7 @@ void ILI9341_t3DMA::ddrawRotChar(unsigned char c, bool compress) {
       xFlag = false;
       while (i--) {
         if (glcdfont[c5 + j] & mask) {
-          ddrawPixel( cursor_x - i,  cursor_y, textcolor);
+          drawPixel( cursor_x - i,  cursor_y, textcolor);
           xFlag = true;
         }
         mask = mask << 1;
@@ -1081,4 +1300,46 @@ void ILI9341_t3DMA::ddrawRotChar(unsigned char c, bool compress) {
     }
     cursor_y--;
   }
+}
+
+void ILI9341_t3DMA::setCursor(int16_t x, int16_t y) {
+	if (x < 0) x = 0;
+	else if (x >= _width) x = _width - 1;
+	cursor_x = x;
+	if (y < 0) y = 0;
+	else if (y >= _height) y = _height - 1;
+	cursor_y = y;
+}
+
+void ILI9341_t3DMA::getCursor(int16_t *x, int16_t *y) {
+  *x = cursor_x;
+  *y = cursor_y;
+}
+
+void ILI9341_t3DMA::setTextSize(uint8_t s) {
+  textsize = (s > 0) ? s : 1;
+}
+
+uint8_t ILI9341_t3DMA::getTextSize() {
+	return textsize;
+}
+
+void ILI9341_t3DMA::setTextColor(uint16_t c) {
+  // For 'transparent' background, we'll set the bg
+  // to the same as fg instead of using a flag
+  textcolor = textbgcolor = c;
+}
+
+void ILI9341_t3DMA::setTextColor(uint16_t c, uint16_t b) {
+  textcolor   = c;
+  textbgcolor = b;
+}
+
+void ILI9341_t3DMA::setTextWrap(boolean w) {
+  wrap = w;
+}
+
+boolean ILI9341_t3DMA::getTextWrap()
+{
+	return wrap;
 }
